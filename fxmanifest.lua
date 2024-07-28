@@ -6,14 +6,15 @@ description 'Simple taxi script'
 version '1.0.0beta'
 lua54 'yes'
 
+shared_scripts {
+	'config.lua',
+	'@ox_lib/init.lua',
+}
+
 server_scripts {
     'server/*.lua',
 }
 
 client_scripts {
     'client/*.lua',
-}
-
-shared_scripts {
-    'config.lua',
 }

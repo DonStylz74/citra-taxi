@@ -4,6 +4,13 @@ local blip, skippedOnCab = nil, false
 local ESX = Config.framework == 'esx' and exports['es_extended']:getSharedObject() or nil
 local QBCore = Config.framework == 'qb' and exports['qb-core']:GetCoreObject() or nil
 
+CreateThread(function()
+    while true do
+        playerCoords = GetEntityCoords(cache.ped)
+        Wait(1000)
+    end
+end)
+
 -- Functions
 local function notify(msg, type)
     if QBCore then
@@ -71,8 +78,7 @@ end
 
 local function driveTo()
     local speed = (curTaxi.style == Config.DrivingStyles.Rush) and curTaxi.speed * Config.RushSpeedMultiplier or curTaxi.speed
-    TaskVehicleDriveToCoordLongrange(curTaxi.ped, curTaxi.vehicle, curTaxi.dest.x, curTaxi.dest.y, curTaxi.dest.z,
-        speed, curTaxi.style, 5.0)
+    TaskVehicleDriveToCoordLongrange(curTaxi.ped, curTaxi.vehicle, curTaxi.dest.x, curTaxi.dest.y, curTaxi.dest.z, speed, curTaxi.style, 5.0)
     SetPedKeepTask(curTaxi.ped, true)
     SetDriverAggressiveness(curTaxi.ped, (curTaxi.style == Config.DrivingStyles.Rush) and 0.75 or 0.5)
 
@@ -82,9 +88,21 @@ local function driveTo()
             break
         end
     end
+
+    -- Monitor the taxi's position and park when close to the destination
+    CreateThread(function()
+        while curTaxi.vehicle ~= 0 do
+            local dist = #(GetEntityCoords(curTaxi.vehicle) - curTaxi.dest)
+            if dist < Config.SlowdownDist then
+                park(IsPedInVehicle(cache.ped, curTaxi.vehicle, true))
+                break
+            end
+            Wait(500)
+        end
+    end)
 end
 
-local function park(inTaxi)
+function park(inTaxi)
     local speed = curTaxi.speed
     curTaxi.speed = Config.SlowdownSpeed
 
@@ -95,13 +113,18 @@ local function park(inTaxi)
         Wait(100)
     end
 
+    if inTaxi then
+        print("Trying to launch menu.")
+        lib.showMenu('pay_fare')
+    end
+
     if not inTaxi then
         StartVehicleHorn(curTaxi.vehicle, 5000, joaat("NORMAL"), false)
     end
 end
 
 local function taxiDone()
-    local plyPed = PlayerPedId()
+    local plyPed = cache.ped
 
     if IsPedInVehicle(plyPed, curTaxi.vehicle, true) then
         local coords = GetEntityCoords(curTaxi.vehicle)
@@ -115,12 +138,12 @@ local function taxiDone()
 end
 
 local function waitForTaxiDone()
-    local inTaxi, inTime, taxiCoords = false, 0, GetEntityCoords(curTaxi.vehicle)
+    inTaxi, inTime, taxiCoords = false, GetGameTimer(), GetEntityCoords(curTaxi.vehicle)
 
     CreateThread(function() -- Enter / exit taxi
         while curTaxi.vehicle ~= 0 do
             if IsControlJustPressed(0, 23) and not skippedOnCab then
-                local plyPed = PlayerPedId()
+                local plyPed = cache.ped
 
                 if inTaxi then
                     if GetResourceState('qb-vehiclekeys') == "started" then
@@ -131,9 +154,7 @@ local function waitForTaxiDone()
                             SetVehicleDoorOpen(curTaxi.vehicle, i, false, true) -- will open every door from 0-5
                         end
                     end
-
                     TaskLeaveVehicle(plyPed, curTaxi.vehicle, 1)
-                    TriggerServerEvent('citra-taxi:server:payFare', GetGameTimer() - inTime)
                 elseif GetVehiclePedIsTryingToEnter(plyPed) == curTaxi.vehicle then
                     ClearPedTasks(plyPed)
                     for i = 2, 1, -1 do
@@ -153,14 +174,15 @@ local function waitForTaxiDone()
 
         while curTaxi.vehicle ~= 0 and not skippedOnCab do
             local dist = #(curTaxi.dest - taxiCoords)
-            local nowInTaxi = IsPedInVehicle(PlayerPedId(), curTaxi.vehicle, true)
+            local nowInTaxi = IsPedInVehicle(cache.ped, curTaxi.vehicle, true)
 
             if nowInTaxi ~= inTaxi then
                 inTaxi = nowInTaxi
                 CreateMenu(inTaxi)
 
                 if inTaxi then
-                    PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_WHERE_TO", "SPEECH_PARAMS_FORCE_NORMAL")
+                    Wait(1000)--PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_WHERE_TO", "SPEECH_PARAMS_FORCE_NORMAL")
+                    setDestination()
                     if inTime == 0 then inTime = GetGameTimer() end
                     while dist < 15.0 do
                         Wait(100)
@@ -221,7 +243,7 @@ local function spawnTaxi()
     local model = joaat(Config.TaxiModel)
 
     if IsModelValid(model) and IsThisModelACar(model) then
-        local plyCoords = GetEntityCoords(PlayerPedId())
+        local plyCoords = GetEntityCoords(cache.ped)
         local spawnCoords, spawnHeading = getStartingLocation(plyCoords)
         curTaxi.dest = getStoppingLocation(plyCoords)
         curTaxi.style = Config.DrivingStyles.Normal
@@ -230,6 +252,7 @@ local function spawnTaxi()
         while not HasModelLoaded(model) do Wait(1) end
 
         curTaxi.vehicle = CreateVehicle(model, spawnCoords, spawnHeading, true, true)
+        exports.ND_Fuel:SetFuel(curTaxi.vehicle, 100.0)
 
         while not DoesEntityExist(curTaxi.vehicle) do Wait(10) end
         SetVehicleEngineOn(curTaxi.vehicle, true, true, false)
@@ -271,23 +294,34 @@ local function spawnTaxi()
     end
 end
 
-local function setDestination()
-    local waypoint = GetFirstBlipInfoId(8)
+function setDestination()
+    local previousWaypoint = nil
+    PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_WHERE_TO", "SPEECH_PARAMS_FORCE_NORMAL")
+    Wait(2000)
+    while true do
+        local waypoint = GetFirstBlipInfoId(8)
 
-    if DoesBlipExist(waypoint) then
-        if curTaxi.dest then PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_CHANGE_DEST", "SPEECH_PARAMS_FORCE_NORMAL") end
-        curTaxi.dest = getStoppingLocation(GetBlipCoords(waypoint))
-        driveTo()
-        PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_BEGIN_JOURNEY", "SPEECH_PARAMS_FORCE_NORMAL")
-    else
-        PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_WHERE_TO", "SPEECH_PARAMS_FORCE_NORMAL")
+        if DoesBlipExist(waypoint) then
+            local currentCoords = GetBlipCoords(waypoint)
+            if not curTaxi.dest or previousWaypoint ~= currentCoords then
+                if curTaxi.dest then
+                    PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_CHANGE_DEST", "SPEECH_PARAMS_FORCE_NORMAL")
+                end
+                curTaxi.dest = getStoppingLocation(currentCoords)
+                driveTo()
+                PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_BEGIN_JOURNEY", "SPEECH_PARAMS_FORCE_NORMAL")
+                previousWaypoint = currentCoords
+            end
+        end
+
+        Citizen.Wait(1000) -- Check every second
     end
 end
 
 local function callCab(cancelExisting)
     if skippedOnCab and curTaxi.vehicle ~= 0 then -- Waits until the skipped cab is cleared
         notify("You skipped out on your last taxi. No way we're sending another one right now!", 'error')
-    elseif curTaxi.vehicle == 0 or not DoesEntityExist(curTaxi.vehicle) then
+    elseif curTaxi.vehicle == 0 or curTaxi.vehicle == nil or not DoesEntityExist(curTaxi.vehicle) then
         skippedOnCab = false
         spawnTaxi()
     elseif cancelExisting then
@@ -300,7 +334,13 @@ RegisterNetEvent('citra-taxi:client:callOrCancelTaxi', function()
     callCab(true)
 end)
 
-RegisterNetEvent('citra-taxi:client:callTaxi', function()
+-- Events
+RegisterNetEvent('citra-taxi:client:taxiStop', function()
+    taxiDone()
+end)
+
+RegisterNetEvent('citra-taxi:client:callTaxi')
+AddEventHandler('citra-taxi:client:callTaxi', function()
     callCab(false)
 end)
 
@@ -312,13 +352,13 @@ RegisterNetEvent('citra-taxi:client:cancelTaxi', function()
 end)
 
 RegisterNetEvent('citra-taxi:client:setDestination', function()
-    if curTaxi.vehicle ~= 0 and IsPedInVehicle(PlayerPedId(), curTaxi.vehicle, true) then
+    if curTaxi.vehicle ~= 0 and IsPedInVehicle(cache.ped, curTaxi.vehicle, true) then
         setDestination()
     end
 end)
 
 RegisterNetEvent('citra-taxi:client:speedUp', function()
-    if curTaxi.vehicle ~= 0 and IsPedInVehicle(PlayerPedId(), curTaxi.vehicle, true) then
+    if curTaxi.vehicle ~= 0 and IsPedInVehicle(cache.ped, curTaxi.vehicle, true) then
         PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_SPEED_UP", "SPEECH_PARAMS_FORCE_NORMAL")
         curTaxi.style = Config.DrivingStyles.Rush
         driveTo()
@@ -327,7 +367,7 @@ RegisterNetEvent('citra-taxi:client:speedUp', function()
 end)
 
 RegisterNetEvent('citra-taxi:client:speedDown', function()
-    if curTaxi.vehicle ~= 0 and IsPedInVehicle(PlayerPedId(), curTaxi.vehicle, true) then
+    if curTaxi.vehicle ~= 0 and IsPedInVehicle(cache.ped, curTaxi.vehicle, true) then
         PlayPedAmbientSpeechNative(curTaxi.ped, "TAXID_BEGIN_JOURNEY", "SPEECH_PARAMS_FORCE_NORMAL")
         curTaxi.style = Config.DrivingStyles.Normal
         driveTo()
@@ -342,7 +382,7 @@ RegisterNetEvent('citra-taxi:client:farePaid', function(fare)
 end)
 
 RegisterNetEvent('citra-taxi:client:alertPolice', function()
-    local coords = GetEntityCoords(PlayerPedId())
+    local coords = GetEntityCoords(cache.ped)
     local alertMsg = 'Taxi Fare Theft'
     local taxiPed = curTaxi.ped
     skippedOnCab = true
@@ -352,46 +392,33 @@ RegisterNetEvent('citra-taxi:client:alertPolice', function()
             PlayPedAmbientSpeechNative(taxiPed, "TAXID_RUN_AWAY", "SPEECH_PARAMS_FORCE_NORMAL")
             Wait(30000)
         end
-        wanderOff()
     end)
 
-    if GetResourceState('ps-dispatch') == 'started' then
-        exports['ps-dispatch']:CustomAlert({
-            message = alertMsg,
-            description = alertMsg,
-            icon = 'fas fa-taxi',
-            coords = coords,
-            gender = true,
-            sprite = 198,
-            color = 1,
-            scale = 1.0,
-            length = 5,
-        })
-    elseif GetResourceState('cd_dispatch') == 'started' then
-        local data = exports['cd_dispatch']:GetPlayerInfo()
-        TriggerServerEvent('cd_dispatch:AddNotification', {
-            job_table = {'police', },
-            coords = data.coords,
-            title = alertMsg,
-            message = 'A '..data.sex..' just skipped on their taxi fare on '..data.street,
-            flash = 0,
-            unique_id = data.unique_id,
-            sound = 1,
-            blip = {
-                sprite = 119,
-                scale = 0.95,
-                colour = 3,
-                flashes = true,
-                text = '911 - ' .. alertMsg,
-                time = 5,
-                radius = 0,
-            }
-        })
-    elseif QBCore then
-        TriggerServerEvent('police:server:policeAlert', alertMsg)
-    elseif ESX then
-        TriggerServerEvent('esx_service:notifyAllInService', alertMsg, 'police')
+    -- Make cabbie fight player
+    SetEntityInvincible(curTaxi.ped, false)
+    GiveWeaponToPed(curTaxi.ped, GetHashKey("weapon_bat"),1, false, true)
+    SetCurrentPedWeapon(curTaxi.ped, GetHashKey("weapon_bat"), true)
+    SetCanAttackFriendly(curTaxi.ped, true, false)
+    SetPedRelationshipGroupHash(curTaxi.ped, "VehicleOwners")
+    SetPedDropsWeaponsWhenDead(curTaxi.ped, false)
+    SetPedCombatAttributes(curTaxi.ped, 13, true)
+    TaskCombatPed(curTaxi.ped, cache.ped, 0, 16)
+    --Set NPC to call 911
+    showSubtitle("I'm going to fuck you up!", 5000)
+    local pos = playerCoords
+    local postal = exports["postalscript"]:getPostal()
+    if pos then
+        s1, s2 = GetStreetNameAtCoord(pos.x, pos.y, pos.z)
     end
+    local street1 = GetStreetNameFromHashKey(s1)
+    local street2 = GetStreetNameFromHashKey(s2)
+    local streetLabel = street1
+    local callDescription = "Yellow Cab Dispatch is reporting a cabbie at "..postal.." "..streetLabel.." activated his panic button. He is armed. Dispatch is unable to contact their employee. Use caution."
+    if street2 ~= nil then
+        streetLabel = streetLabel .. ' ' .. street2
+    end
+    print(streetLabel, callDescription, GetPlayerServerId(PlayerId()))
+    TriggerServerEvent('SonoranCAD::callcommands:SendCallApi', true, 'Yellow Cab', streetLabel, callDescription, GetPlayerServerId(PlayerId()), nil, nil, '911')
 end)
 
 AddEventHandler('onResourceStart', function(resourceName)
@@ -405,3 +432,45 @@ AddEventHandler('onResourceStop', function(resourceName)
         wanderOff()
     end
 end)
+
+-- Oxlib menu to pay fare
+trafficMenu = lib.registerMenu({
+    id = 'pay_fare',
+    title = 'Pay Fare',
+    position = 'top-right',
+    onSideScroll = function(selected, scrollIndex, args)
+    end,
+    onSelected = function(selected, secondary, args)
+    end,
+    onCheck = function(selected, checked, args)
+    end,
+    onClose = function(keyPressed)
+        if keyPressed then
+        end
+    end,
+    options = {
+        {label = 'Pay Fare', close = true},
+        {label = 'Skip Out and Run!', close = true},
+    }
+}, function(selected, scrollIndex, args)
+    if selected == 1 then
+        print("Paying fare.")
+        TriggerServerEvent('qb-vehiclekeys:server:setVehLockState', curTaxi.vehicle, 1)
+        Wait(500)
+        TriggerServerEvent('citra-taxi:server:payFare', GetGameTimer() - inTime)
+        TaskLeaveVehicle(cache.ped, curTaxi.vehicle, 1)
+    elseif selected == 2 then
+        TriggerServerEvent('qb-vehiclekeys:server:setVehLockState', curTaxi.vehicle, 1)
+        Wait(500)
+        TaskLeaveVehicle(curTaxi.ped, curTaxi.vehicle, 1)
+        TaskLeaveVehicle(cache.ped, curTaxi.vehicle, 1)
+        TriggerEvent('citra-taxi:client:alertPolice')
+    end
+end)
+
+--ShowTitle Function
+function showSubtitle(message, duration)
+    BeginTextCommandPrint('STRING')
+    AddTextComponentString(message)
+    EndTextCommandPrint(duration, true)
+end
