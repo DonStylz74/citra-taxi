@@ -1,8 +1,8 @@
 Config = {}
 
-Config.framework = 'qb' -- | 'qb' -> qb-core | 'esx' -> es_extended |
+Config.framework = 'esx' -- | 'qb' -> qb-core | 'esx' -> es_extended |
 
-Config.MinSpawnDist = 100.0 -- Min distance that a taxi will spawn from the player (in-game units)
+Config.MinSpawnDist = 125.0 -- Min distance that a taxi will spawn from the player (in-game units)
 
 Config.DrivingStyles = { -- See https://vespura.com/fivem/drivingstyle/
     Normal = 524731,
@@ -10,12 +10,12 @@ Config.DrivingStyles = { -- See https://vespura.com/fivem/drivingstyle/
 }
 Config.RushSpeedMultiplier = 1.5 -- How much faster the cab will go when rushing
 Config.SlowdownSpeed = 15 * 0.44704 -- The speed the cab will begin to pull over at
-Config.SlowdownDist = 35.0 -- How far away the cab should slow down and honk
+Config.SlowdownDist = 30.0 -- How far away the cab should slow down and honk
 
 Config.Fare = {
-    base = 5.0,        -- Base rate when entering the cab
-    tick = 3.00,       -- How much to charge per tick
-    tickTime = 15 * 1000 -- How often to charge the tick rate (e.g., $1.50 per 15 seconds)
+    base = 25.0,        -- Base rate when entering the cab
+    tick = 5.00,       -- How much to charge per tick
+    tickTime = 6 * 1000 -- How often to charge the tick rate (e.g., $1.50 per 15 seconds)
 }
 
 Config.DriverModel = 'a_m_y_stlat_01' -- Driver model name
