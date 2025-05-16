@@ -252,7 +252,7 @@ local function spawnTaxi()
         while not HasModelLoaded(model) do Wait(1) end
 
         curTaxi.vehicle = CreateVehicle(model, spawnCoords, spawnHeading, true, true)
-        exports.ND_Fuel:SetFuel(curTaxi.vehicle, 100.0)
+        --exports.ND_Fuel:SetFuel(curTaxi.vehicle, 100.0)
 
         while not DoesEntityExist(curTaxi.vehicle) do Wait(10) end
         SetVehicleEngineOn(curTaxi.vehicle, true, true, false)
